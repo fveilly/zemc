@@ -16,6 +16,9 @@ const ListHead = struct {
     pub inline fn add(self: *ListHead, new: *ListHead) void {
         list_add(new, self);
     }
+    pub inline fn add_tail(self: *ListHead, new: *ListHead) void {
+        list_add_tail(new, self);
+    }
     pub inline fn replace(self: *ListHead, new: *ListHead) void {
         list_replace(self, new);
         list_init(self);
@@ -286,6 +289,36 @@ pub fn ListReverseIteratorRaw() type {
             return self.cursor;
         }
     };
+}
+
+test "example" {
+    // Any structure containing ListHead can be added to the list
+    const Point = struct { x: i32, y: i32, list_ref: ListHead };
+
+    // Initialize the head of the list
+    var list = ListHead.default();
+    list_init(&list);
+
+    var p1: Point = .{ .x = 13, .y = 64, .list_ref = ListHead.default() };
+    var p2: Point = .{ .x = 14, .y = 65, .list_ref = ListHead.default() };
+
+    // Add two elements to the list
+    list.add(&p1.list_ref);
+    list.add_tail(&p2.list_ref);
+
+    // Iterate over the list
+    var iter = ListIterator(Point).init(&list, "list_ref");
+    while (iter.next()) |value| {
+        value.x += 1;
+    }
+
+    // Iterate over the list and remove all the elements
+    var rawIter = ListIteratorRaw().init(&list);
+    while (rawIter.next()) |entry| {
+        list_del(entry);
+    }
+
+    try expect(list.empty());
 }
 
 test "basic test" {
