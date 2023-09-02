@@ -19,13 +19,6 @@ const ListHead = struct {
     pub inline fn add_tail(self: *ListHead, new: *ListHead) void {
         list_add_tail(new, self);
     }
-    pub inline fn replace(self: *ListHead, new: *ListHead) void {
-        list_replace(self, new);
-        list_init(self);
-    }
-    pub inline fn swap(self: *ListHead, entry: *ListHead) void {
-        list_swap(self, entry);
-    }
     pub inline fn move(self: *ListHead, head: *ListHead) void {
         list_move(self, head);
     }
@@ -97,14 +90,14 @@ inline fn list_insert(new: *ListHead, prev: *ListHead, next: *ListHead) void {
     WriteOnce(ListHead, &prev.next, new);
 }
 
-/// Insert a new entry after the specified head
-pub inline fn list_add(new: *ListHead, head: *ListHead) void {
-    list_insert(new, head, head.next.?);
+/// Insert a new entry after the specified entry
+pub inline fn list_add(new: *ListHead, entry: *ListHead) void {
+    list_insert(new, entry, entry.next.?);
 }
 
-/// Insert a new entry before the specified head
-pub inline fn list_add_tail(new: *ListHead, head: *ListHead) void {
-    list_insert(new, head.prev.?, head);
+/// Insert a new entry before the specified entry
+pub inline fn list_add_tail(new: *ListHead, entry: *ListHead) void {
+    list_insert(new, entry.prev.?, entry);
 }
 
 inline fn list_del_internal(prev: *ListHead, next: *ListHead) void {
@@ -123,23 +116,66 @@ pub inline fn list_del(entry: *ListHead) void {
     }
 }
 
+pub inline fn list_replace_internal(old: *ListHead, new: *ListHead) void {
+    if (old.next) |next| {
+        new.next = next;
+        next.prev = new;
+    }
+    if (old.prev) |prev| {
+        new.prev = prev;
+        prev.next = new;
+    }
+}
+
 /// Replace old entry by a new one
+/// #SAFETY: The new entry MUST not be contained in a list.
+///          Old and new entries MUST be different.
+pub inline fn list_replace_unsafe(old: *ListHead, new: *ListHead) void {
+    assert(new.next == null and new.prev == null);
+    assert(old != new);
+    list_replace_internal(old, new);
+    old.next = null;
+    old.prev = null;
+}
+
+/// Replace old entry by a new one
+/// If the new entry is contained on a list, remove it beforehand.
 pub inline fn list_replace(old: *ListHead, new: *ListHead) void {
-    new.next = old.next;
-    new.next.prev = new;
-    new.prev = old.prev;
-    new.prev.next = new;
+    if (old != new) {
+        list_del(new);
+        list_replace_unsafe(old, new);
+    }
+}
+
+/// Swap entry1 with entry2
+pub inline fn list_swap_unsafe(entry1: *ListHead, entry2: *ListHead) void {
+    assert(entry1 != entry2);
+
+    if (entry2.next) |next| {
+        if (entry2.prev) |prev| {
+            list_del_internal(prev, next);
+            // Replace entry1 with entry2
+            list_replace_internal(entry1, entry2);
+            // entry1 precede entry2
+            if (prev == entry1) {
+                list_add(entry1, entry2);
+            } else {
+                list_add(entry1, prev);
+            }
+        } else {
+            unreachable;
+        }
+    } else {
+        // Replace entry1 with entry2
+        list_replace_unsafe(entry1, entry2);
+    }
 }
 
 /// Swap entry1 with entry2
 pub inline fn list_swap(entry1: *ListHead, entry2: *ListHead) void {
-    const pos = entry2.prev;
-    list_del(entry2);
-    list_replace(entry1, entry2);
-    if (pos == entry1) {
-        pos = entry2;
+    if (entry1 != entry2) {
+        list_swap_unsafe(entry1, entry2);
     }
-    list_add(entry1, pos);
 }
 
 /// Delete from one list and add to as annother's head
@@ -472,4 +508,85 @@ test "reverse iterator with removal" {
         const value = list_entry(Value, "list_ref", entry);
         try expectEqual(value.x, array.len - i - 1);
     }
+}
+
+test "replace" {
+    const Point = struct { x: i32, y: i32, list_ref: ListHead };
+    var list = ListHead.default();
+    list_init(&list);
+
+    var p1: Point = .{ .x = 13, .y = 64, .list_ref = ListHead.default() };
+    var p2: Point = .{ .x = 14, .y = 65, .list_ref = ListHead.default() };
+
+    // Replacing an entry that is not contained in a list should have no effect
+    list_replace(&p1.list_ref, &p2.list_ref);
+    list_replace_unsafe(&p1.list_ref, &p2.list_ref);
+
+    list.add(&p1.list_ref);
+
+    // Replacing an entry by itself should have no effect
+    list_replace(&p1.list_ref, &p1.list_ref);
+
+    var first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 13);
+    try expectEqual(first.y, 64);
+
+    list_replace(&p2.list_ref, &p1.list_ref);
+    try expect(list.empty());
+    list.add(&p1.list_ref);
+
+    list_replace(&p1.list_ref, &p2.list_ref);
+
+    first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 14);
+    try expectEqual(first.y, 65);
+
+    try expect(list.is_singular());
+}
+
+test "swap" {
+    const Point = struct { x: i32, y: i32, list_ref: ListHead };
+    var list = ListHead.default();
+    list_init(&list);
+
+    var p1: Point = .{ .x = 13, .y = 64, .list_ref = ListHead.default() };
+    var p2: Point = .{ .x = 14, .y = 65, .list_ref = ListHead.default() };
+    var p3: Point = .{ .x = 2, .y = 14, .list_ref = ListHead.default() };
+
+    // Swapping two items that are not part of a list should result in no changes
+    list_swap(&p1.list_ref, &p2.list_ref);
+
+    list.add(&p1.list_ref);
+
+    // Swapping an entry with itself should result in no change
+    list_swap(&p1.list_ref, &p1.list_ref);
+
+    var first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 13);
+    try expectEqual(first.y, 64);
+
+    // Swapping an entry with one that is not in the list should result in the replacement of the entry
+    list_swap(&p1.list_ref, &p2.list_ref);
+
+    first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 14);
+    try expectEqual(first.y, 65);
+
+    list.add(&p1.list_ref);
+
+    first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 13);
+    try expectEqual(first.y, 64);
+
+    list_swap(&p1.list_ref, &p2.list_ref);
+
+    first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 14);
+    try expectEqual(first.y, 65);
+
+    list_swap(&p2.list_ref, &p3.list_ref);
+
+    first = list_first_entry(Point, "list_ref", &list);
+    try expectEqual(first.x, 2);
+    try expectEqual(first.y, 14);
 }
